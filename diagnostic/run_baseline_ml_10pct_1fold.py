@@ -1,6 +1,6 @@
 """
-7维 sigmoid baseline — 多标签公平对照
-与 CALE 使用相同的 10% subject 抽样、1 折、ResNet-18
+7-dim sigmoid baseline - fair multi-label comparison
+Uses the same 10% subject sampling, 1 fold, ResNet-18 as CALE
 """
 import os, json, random, time
 from pathlib import Path
