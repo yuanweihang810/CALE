@@ -1,7 +1,7 @@
 # run_cale_v2_10pct_1fold_mobilenetv2_softlabel0.py
 """
-CALE V2 (LE only, SOFT_LABEL=0.0) —— 10% subject 抽样，1 折，30 epoch
-诊断实验：训练时其他条件位置设为 0（只监督主分支）
+CALE V2 (LE only, SOFT_LABEL=0.0) - 10% subject sampling, 1 fold, 30 epochs
+Diagnostic experiment: other condition positions set to 0 during training (only main branch supervised)
 """
 import os, json, random, time
 from pathlib import Path
@@ -19,14 +19,14 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from sklearn.metrics import accuracy_score, hamming_loss, f1_score, recall_score
 from sklearn.model_selection import GroupKFold
 
-# ==================== 配置 ====================
+# ==================== Configuration ====================
 CUSTOM_DIR = '/root/autodl-tmp/IEEE/data_aligned'
 TEST_DIR   = '/root/autodl-tmp/IEEE/test_aligned/test'
 LABEL_FILE = '/root/autodl-tmp/IEEE/label.txt'
 
 BACKBONE_NAME = 'mobilenetv2'
 VARIANT = 'V2'
-SOFT_LABEL      = 0.0          # <<< 唯一改动：0.5 -> 0.0
+SOFT_LABEL      = 0.0          # <<< only change: 0.5 -> 0.0
 INFERENCE_SCALE = 0.5
 FIXED_THRESHOLD = 0.5
 
@@ -66,7 +66,7 @@ NUM_CLASSES    = len(EMOTIONS)
 NUM_CONDITIONS = 4
 NUM_OUTPUTS    = NUM_CLASSES * NUM_CONDITIONS
 
-# ==================== 数据增强 ====================
+# ==================== Data augmentation ====================
 transform_train = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
@@ -78,7 +78,7 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 
-# ==================== 条件分辨器 ====================
+# ==================== Condition classifier ====================
 LOW_BRIGHTNESS_THRESH  = 80
 HIGH_BRIGHTNESS_THRESH = 120
 BLUR_VAR_THRESH        = 10
@@ -112,7 +112,7 @@ def folder_to_emotion(name):
 def extract_subject_id(p):
     return os.path.basename(p).split('_')[0]
 
-# ==================== 数据集 ====================
+# ==================== Dataset ====================
 class CALEDataset(torch.utils.data.Dataset):
     def __init__(self, split, transform=None, precomputed_samples=None, subset_indices=None):
         self.transform = transform
@@ -141,7 +141,7 @@ class CALEDataset(torch.utils.data.Dataset):
                 if img_file.suffix.lower() in ('.jpg', '.jpeg', '.png'):
                     cond = classify_condition(str(img_file))
                     self.samples.append((str(img_file), label, cond, emo_idx))
-        print(f'训练集加载完毕: {len(self.samples)} 张图片')
+        print(f'Training set loaded: {len(self.samples)} images')
 
     def _load_test(self, img_dir, label_path):
         with open(label_path, 'r') as f:
@@ -158,7 +158,7 @@ class CALEDataset(torch.utils.data.Dataset):
                     self.samples.append((p, labels, classify_condition(p), -1))
                     break
         self.samples.sort(key=lambda x: x[0])
-        print(f'测试集加载完毕: {len(self.samples)} 张图片')
+        print(f'Test set loaded: {len(self.samples)} images')
 
     def __len__(self):
         return len(self.samples)
@@ -183,7 +183,7 @@ def build_weighted_sampler(dataset):
                for _, _, _, emo_idx in dataset.samples]
     return WeightedRandomSampler(weights=weights, num_samples=len(weights), replacement=True)
 
-# ==================== SE / 模型 ====================
+# ==================== SE / Model ====================
 class SELayer(nn.Module):
     def __init__(self, c, r=16):
         super().__init__()
@@ -195,7 +195,7 @@ class SELayer(nn.Module):
         return x * y
 
 class BackboneCALE(nn.Module):
-    """通用骨干 + CALE 头部。兼容 ResNet-18/34/50、MobileNetV2、EfficientNet-B0。"""
+    """Generic backbone + CALE head. Compatible with ResNet-18/34/50, MobileNetV2, EfficientNet-B0."""
 
     def __init__(self, num_outputs=28, reduction=16,
                  dropout=0.5, freeze_shallow=False, use_se=True,
@@ -276,12 +276,11 @@ class BackboneCALE(nn.Module):
         return x
 
 
-
 def build_targets_28(emo_indices, cond_indices):
     B = emo_indices.size(0)
     t28 = torch.zeros(B, NUM_CLASSES, NUM_CONDITIONS, device=emo_indices.device)
     arange = torch.arange(B, device=emo_indices.device)
-    # SOFT_LABEL=0.0 时，这个循环等价于什么都不写
+    # When SOFT_LABEL=0.0, this loop is equivalent to writing nothing
     for c in range(NUM_CONDITIONS):
         t28[arange, emo_indices, c] = SOFT_LABEL
     t28[arange, emo_indices, cond_indices] = 1.0
@@ -296,7 +295,7 @@ def soft_focal_loss(logits, targets, alphas_28, gamma=2.0):
                           torch.ones_like(targets))
     return (alpha_w * (pos_loss + neg_loss)).mean()
 
-# ==================== 训练 / 推理 / 评估 ====================
+# ==================== Training / Inference / Evaluation ====================
 def train_epoch(model, loader, optimizer, alphas_28):
     model.train()
     total_loss = 0.0
@@ -361,11 +360,11 @@ def evaluate(model, loader, mode='singlelabel', threshold=FIXED_THRESHOLD):
             'hit_rate': float(hit_rate), 'avg_labels': float(avg_lab),
             'per_f1': per_f1, 'cond_uar': cond_uar}
 
-# ==================== 主程序 ====================
+# ==================== Main ====================
 def main():
     print(f'Device: {DEVICE}')
     print(f'CALE V2 | SOFT_LABEL={SOFT_LABEL} | USE_MS={USE_MS} | USE_SE={USE_SE}')
-    print(f'训练数据比例: 10% subjects | 只跑第 1 折')
+    print(f'Training data ratio: 10% subjects | only fold 1')
     print()
 
     alphas_28 = torch.tensor(CLASS_ALPHAS, dtype=torch.float32)
@@ -374,12 +373,12 @@ def main():
     full_train = CALEDataset('Training', transform_train)
     all_samples = full_train.samples
     subject_ids = [extract_subject_id(s[0]) for s in all_samples]
-    print(f'共提取到 {len(set(subject_ids))} 个不同实例\n')
+    print(f'Extracted {len(set(subject_ids))} unique subjects\n')
 
     test_set = CALEDataset('Testing', transform_test)
     test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False,
                              num_workers=NUM_WORKERS, pin_memory=True)
-    print(f'独立多标签测试集样本数: {len(test_set)}\n')
+    print(f'Independent multi-label test set size: {len(test_set)}\n')
 
     gkf = GroupKFold(n_splits=K_FOLDS)
     fold_results = []
@@ -389,7 +388,7 @@ def main():
         if fold >= 1:
             break
         fold_id = fold + 1
-        print(f'\n{"="*80}\nFold {fold_id}/5 (只跑此折)\n{"="*80}')
+        print(f'\n{"="*80}\nFold {fold_id}/5 (only this fold)\n{"="*80}')
 
         train_subjects = list(set([subject_ids[i] for i in train_idx]))
         rng = np.random.RandomState(SEED + fold)
@@ -397,8 +396,8 @@ def main():
         num_keep = max(1, int(len(train_subjects) * 0.1))
         kept_subjects = set(train_subjects[:num_keep])
         train_idx_sub = [i for i in train_idx if subject_ids[i] in kept_subjects]
-        print(f'原始训练 subject: {len(train_subjects)}，抽样后: {len(kept_subjects)}，'
-              f'图像: {len(train_idx)} -> {len(train_idx_sub)}')
+        print(f'Original training subjects: {len(train_subjects)}, after sampling: {len(kept_subjects)}, '
+              f'images: {len(train_idx)} -> {len(train_idx_sub)}')
 
         train_set = CALEDataset('Training', transform_train,
                                 precomputed_samples=all_samples,
@@ -448,21 +447,21 @@ def main():
             else:
                 patience += 1
                 if patience >= PATIENCE:
-                    print(f'[Fold {fold_id}] 早停 at epoch {epoch+1}')
+                    print(f'[Fold {fold_id}] Early stopping at epoch {epoch+1}')
                     break
             scheduler.step()
 
-        print(f'[Fold {fold_id}] 耗时 {(time.time()-t0)/60:.1f} 分钟 | '
-              f'最佳 epoch {best_val_epoch} | Val MacroF1={best_val_macro_f1:.4f}')
+        print(f'[Fold {fold_id}] Time {(time.time()-t0)/60:.1f} min | '
+              f'Best epoch {best_val_epoch} | Val MacroF1={best_val_macro_f1:.4f}')
 
         model.load_state_dict(best_state)
         val_best = evaluate(model, val_loader, mode='singlelabel')
         test_metrics = evaluate(model, test_loader, mode='multilabel')
 
-        print(f'\n[Fold {fold_id}] 验证集 (singlelabel): '
+        print(f'\n[Fold {fold_id}] Validation (singlelabel): '
               f'Acc={val_best["accuracy"]:.4f} | UAR={val_best["uar"]:.4f} | '
               f'MacroF1={val_best["macro_f1"]:.4f}')
-        print(f'[Fold {fold_id}] 测试集 (multilabel th={FIXED_THRESHOLD}): '
+        print(f'[Fold {fold_id}] Test (multilabel th={FIXED_THRESHOLD}): '
               f'UAR={test_metrics["uar"]:.4f} | MacroF1={test_metrics["macro_f1"]:.4f} | '
               f'MicroF1={test_metrics["micro_f1"]:.4f} | Hit={test_metrics["hit_rate"]:.4f} | '
               f'AvgLabels={test_metrics["avg_labels"]:.4f}')
@@ -477,7 +476,7 @@ def main():
             'test_avg_labels': test_metrics['avg_labels'],
         })
 
-    print(f'\n{"="*80}\nSOFT_LABEL={SOFT_LABEL} 10% 1 折结果\n{"="*80}')
+    print(f'\n{"="*80}\nSOFT_LABEL={SOFT_LABEL} 10% 1-fold results\n{"="*80}')
     for k in ['val_accuracy', 'val_uar', 'val_macro_f1',
               'test_uar', 'test_macro_f1', 'test_micro_f1',
               'test_hit_rate', 'test_avg_labels']:
@@ -486,7 +485,7 @@ def main():
 
     with open(os.path.join(OUTPUT_DIR, 'summary.json'), 'w') as f:
         json.dump({'soft_label': SOFT_LABEL, 'fold_results': fold_results}, f, indent=2)
-    print(f'\n结果已保存至 {OUTPUT_DIR}/summary.json')
+    print(f'\nResults saved to {OUTPUT_DIR}/summary.json')
 
 if __name__ == '__main__':
     main()
