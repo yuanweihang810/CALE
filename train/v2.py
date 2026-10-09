@@ -1,10 +1,10 @@
 """
-CALE 训练脚本 —— 单标签 5 折交叉验证版（优化版）
-- 主实验：训练集 5 折 GroupKFold，验证集单标签 argmax 口径
-- 模型选择：验证集 Macro-F1
-- 补充实验：独立多标签测试集，阈值 0.5 口径
-- 每折保存最佳模型到磁盘
-- 修复 best_state 初始化、summary 保存 dict/list 崩溃问题
+CALE training script - single-label 5-fold cross-validation version (optimized)
+- Main experiment: 5-fold GroupKFold on the training set, validation with single-label argmax protocol
+- Model selection: validation Macro-F1
+- Supplementary experiment: independent multi-label test set, threshold 0.5 protocol
+- Save the best model per fold to disk
+- Fix best_state initialization and summary dict/list crash issues
 """
 
 import os
@@ -28,7 +28,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import GroupKFold
 
-# ==================== 配置 ====================
+# ==================== Configuration ====================
 CUSTOM_DIR = '/root/autodl-tmp/IEEE/data_aligned'
 TEST_DIR   = '/root/autodl-tmp/IEEE/test_aligned/test'
 LABEL_FILE = '/root/autodl-tmp/IEEE/label.txt'
@@ -84,7 +84,7 @@ NUM_CONDITIONS = 4
 NUM_OUTPUTS    = NUM_CLASSES * NUM_CONDITIONS
 CONDITION_NAMES = ['weak_light', 'strong_light', 'low_res', 'standard']
 
-# ==================== 数据增强 ====================
+# ==================== Data augmentation ====================
 if USE_MS:
     transform_train = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -110,13 +110,13 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 
-# ==================== 条件分辨器 ====================
+# ==================== Condition classifier ====================
 LOW_BRIGHTNESS_THRESH  = 80
 HIGH_BRIGHTNESS_THRESH = 120
 BLUR_VAR_THRESH        = 10
 
 def classify_condition(image_path):
-    """返回条件索引：0=weak_light, 1=strong_light, 2=low_res, 3=standard"""
+    """Return condition index: 0=weak_light, 1=strong_light, 2=low_res, 3=standard"""
     try:
         with Image.open(image_path) as img:
             gray = img.convert('L')
@@ -150,7 +150,7 @@ def folder_to_emotion(folder_name):
 def extract_subject_id(img_path):
     return os.path.basename(img_path).split('_')[0]
 
-# ==================== 数据集 ====================
+# ==================== Dataset ====================
 class CALEDataset(torch.utils.data.Dataset):
     def __init__(self, split, transform=None,
                  precomputed_samples=None, subset_indices=None):
@@ -181,7 +181,7 @@ class CALEDataset(torch.utils.data.Dataset):
                 if img_file.suffix.lower() in ('.jpg', '.jpeg', '.png'):
                     cond = classify_condition(str(img_file))
                     self.samples.append((str(img_file), label, cond, emo_idx))
-        print(f'训练集加载完毕: {len(self.samples)} 张图片')
+        print(f'Training set loaded: {len(self.samples)} images')
 
     def _load_test(self, img_dir, label_path):
         with open(label_path, 'r') as f:
@@ -199,7 +199,7 @@ class CALEDataset(torch.utils.data.Dataset):
                     self.samples.append((p, labels, cond, -1))
                     break
         self.samples.sort(key=lambda x: x[0])
-        print(f'测试集加载完毕: {len(self.samples)} 张图片')
+        print(f'Test set loaded: {len(self.samples)} images')
 
     def __len__(self):
         return len(self.samples)
@@ -214,7 +214,7 @@ class CALEDataset(torch.utils.data.Dataset):
                 cond,
                 emo_idx)
 
-# ==================== 加权采样器 ====================
+# ==================== Weighted sampler ====================
 def build_weighted_sampler(dataset):
     if not USE_MS or not USE_WEIGHTED_SAMPLER:
         return None
@@ -230,10 +230,10 @@ def build_weighted_sampler(dataset):
     sampler = WeightedRandomSampler(weights=weights,
                                     num_samples=len(weights),
                                     replacement=True)
-    print(f'加权采样器：各类别样本数 {class_counts}')
+    print(f'Weighted sampler: class counts {class_counts}')
     return sampler
 
-# ==================== SE 模块 ====================
+# ==================== SE module ====================
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=16):
         super().__init__()
@@ -250,14 +250,14 @@ class SELayer(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y
 
-# ==================== CALE 模型 ====================
+# ==================== CALE model ====================
 class ResNet18CALE(nn.Module):
     """
-    ResNet-18 + 可选 SE + 28 维输出
-    V2：不冻结、无 dropout、无 SE
-    V5：浅层冻结、dropout 0.5、无 SE
-    V6：不冻结、无 dropout、有 SE
-    V7：浅层冻结、dropout 0.5、有 SE
+    ResNet-18 + optional SE + 28-dim output
+    V2: no freeze, no dropout, no SE
+    V5: shallow freeze, dropout 0.5, no SE
+    V6: no freeze, no dropout, with SE
+    V7: shallow freeze, dropout 0.5, with SE
     """
     def __init__(self, num_outputs=28, reduction=16,
                  dropout=0.5, freeze_shallow=False, use_se=True):
@@ -306,12 +306,12 @@ class ResNet18CALE(nn.Module):
         x = self.fc(x)
         return x
 
-# ==================== 28 维软标签构造 ====================
+# ==================== 28-dim soft label construction ====================
 def build_targets_28(emo_indices, cond_indices):
     """
-    emo_indices:  (B,) 主情感索引
-    cond_indices: (B,) 主条件索引
-    返回: (B, 28)
+    emo_indices:  (B,) main emotion index
+    cond_indices: (B,) main condition index
+    returns: (B, 28)
     """
     B = emo_indices.size(0)
     t28 = torch.zeros(B, NUM_CLASSES, NUM_CONDITIONS,
@@ -322,7 +322,7 @@ def build_targets_28(emo_indices, cond_indices):
     t28[arange, emo_indices, cond_indices] = 1.0
     return t28.view(B, NUM_OUTPUTS)
 
-# ==================== 软标签 Focal Loss ====================
+# ==================== Soft-label Focal Loss ====================
 def soft_focal_loss(logits, targets, alphas_28, gamma=2.0):
     probs = torch.sigmoid(logits)
     pos_loss = -targets * (1 - probs).pow(gamma) * F.logsigmoid(logits)
@@ -333,7 +333,7 @@ def soft_focal_loss(logits, targets, alphas_28, gamma=2.0):
     loss = alpha_w * (pos_loss + neg_loss)
     return loss.mean()
 
-# ==================== 训练 ====================
+# ==================== Training ====================
 def train_epoch(model, loader, optimizer, alphas_28):
     model.train()
     total_loss = 0.0
@@ -355,18 +355,18 @@ def train_epoch(model, loader, optimizer, alphas_28):
         total_loss += loss.item() * inputs.size(0)
     return total_loss / len(loader.dataset)
 
-# ==================== 推理聚合 ====================
+# ==================== Inference aggregation ====================
 def cale_inference(logits, conds):
     probs = torch.sigmoid(logits).view(-1, NUM_CLASSES, NUM_CONDITIONS)
     one_hot = F.one_hot(conds.long(), NUM_CONDITIONS).float()
     scale   = INFERENCE_SCALE + (1 - INFERENCE_SCALE) * one_hot
     return (probs * scale.unsqueeze(1)).sum(dim=2)   # (B, 7)
 
-# ==================== 评估 ====================
+# ==================== Evaluation ====================
 def evaluate(model, loader, mode='singlelabel', threshold=FIXED_THRESHOLD):
     """
-    mode='singlelabel': argmax 选一个标签
-    mode='multilabel' : 固定阈值 0.5 多标签
+    mode='singlelabel': argmax to select one label
+    mode='multilabel' : fixed threshold 0.5 for multi-label
     """
     model.eval()
     all_preds, all_targets, all_conds = [], [], []
@@ -420,33 +420,33 @@ def evaluate(model, loader, mode='singlelabel', threshold=FIXED_THRESHOLD):
         'per_f1': per_f1, 'cond_uar': cond_uar,
     }
 
-# ==================== 主程序 ====================
+# ==================== Main ====================
 def main():
     print(f'Device: {DEVICE}')
-    print(f'CALE 变体: {VARIANT} | USE_MS={USE_MS} | USE_SE={USE_SE}')
-    print(f'软标签: 主分支=1.0, 其他分支={SOFT_LABEL}')
-    print(f'推理: 主分支保持, 其他分支×{INFERENCE_SCALE}')
-    print(f'验证集口径: singlelabel (argmax)')
-    print(f'测试集口径: multilabel (阈值 {FIXED_THRESHOLD})')
-    print(f'输出目录: {OUTPUT_DIR}')
-    print(f'加权采样: {USE_WEIGHTED_SAMPLER}')
+    print(f'CALE variant: {VARIANT} | USE_MS={USE_MS} | USE_SE={USE_SE}')
+    print(f'Soft label: main branch=1.0, other branches={SOFT_LABEL}')
+    print(f'Inference: main branch kept, other branches x{INFERENCE_SCALE}')
+    print(f'Validation protocol: singlelabel (argmax)')
+    print(f'Test protocol: multilabel (threshold {FIXED_THRESHOLD})')
+    print(f'Output dir: {OUTPUT_DIR}')
+    print(f'Weighted sampling: {USE_WEIGHTED_SAMPLER}')
     print()
 
     alphas_28 = torch.tensor(CLASS_ALPHAS, dtype=torch.float32)
     alphas_28 = alphas_28.repeat_interleave(NUM_CONDITIONS).to(DEVICE)
 
-    # 加载完整训练集（仅一次）
+    # Load full training set (only once)
     full_train = CALEDataset('Training', transform_train)
     all_samples = full_train.samples
     subject_ids = [extract_subject_id(s[0]) for s in all_samples]
-    print(f'共提取到 {len(set(subject_ids))} 个不同实例\n')
+    print(f'Extracted {len(set(subject_ids))} unique subjects\n')
 
-    # 独立多标签测试集
+    # Independent multi-label test set
     test_set = CALEDataset('Testing', transform_test)
     test_loader = DataLoader(test_set, batch_size=BATCH_SIZE,
                              shuffle=False, num_workers=NUM_WORKERS,
                              pin_memory=True)
-    print(f'独立多标签测试集样本数: {len(test_set)}\n')
+    print(f'Independent multi-label test set size: {len(test_set)}\n')
 
     gkf = GroupKFold(n_splits=K_FOLDS)
     fold_results = []
@@ -521,28 +521,28 @@ def main():
             else:
                 patience_counter += 1
                 if patience_counter >= PATIENCE:
-                    print(f'[Fold {fold_id}] 早停 at epoch {epoch+1}')
+                    print(f'[Fold {fold_id}] Early stopping at epoch {epoch+1}')
                     break
             scheduler.step()
 
         elapsed = (time.time() - t_start) / 60
-        print(f'[Fold {fold_id}] 训练耗时: {elapsed:.1f} 分钟')
-        print(f'[Fold {fold_id}] 最佳 epoch: {best_val_epoch}, '
+        print(f'[Fold {fold_id}] Training time: {elapsed:.1f} min')
+        print(f'[Fold {fold_id}] Best epoch: {best_val_epoch}, '
               f'Val MacroF1={best_val_macro_f1:.4f}')
-        print(f'[Fold {fold_id}] 模型已保存: {ckpt_path}')
+        print(f'[Fold {fold_id}] Model saved: {ckpt_path}')
 
-        # 加载最佳模型，在验证集和测试集上评估
+        # Load best model and evaluate on validation and test sets
         model.load_state_dict(best_state)
 
         val_best = evaluate(model, val_loader, mode='singlelabel')
         test_metrics = evaluate(model, test_loader, mode='multilabel')
 
-        print(f'\n[Fold {fold_id}] 验证集最终结果 (singlelabel):')
+        print(f'\n[Fold {fold_id}] Final validation results (singlelabel):')
         print(f'  Accuracy={val_best["accuracy"]:.4f} | '
               f'UAR={val_best["uar"]:.4f} | '
               f'Macro-F1={val_best["macro_f1"]:.4f}')
 
-        print(f'[Fold {fold_id}] 测试集补充结果 (multilabel, th={FIXED_THRESHOLD}):')
+        print(f'[Fold {fold_id}] Supplementary test results (multilabel, th={FIXED_THRESHOLD}):')
         print(f'  UAR={test_metrics["uar"]:.4f} | '
               f'Macro-F1={test_metrics["macro_f1"]:.4f} | '
               f'Micro-F1={test_metrics["micro_f1"]:.4f}')
@@ -566,9 +566,9 @@ def main():
             'per_f1': val_best['per_f1'].tolist(),
         })
 
-    # ==================== 汇总 ====================
+    # ==================== Summary ====================
     print(f'\n{"="*80}')
-    print(f'{VARIANT} 5 折汇总')
+    print(f'{VARIANT} 5-fold summary')
     print(f'{"="*80}')
     keys_to_report = [
         ('val_accuracy',  'Val Accuracy'),
@@ -584,7 +584,7 @@ def main():
         vals = [r[k] for r in fold_results]
         print(f'{label:32s}: {np.mean(vals):.4f} ± {np.std(vals):.4f}')
 
-    # 保存 summary
+    # Save summary
     numeric_keys = [k for k in fold_results[0]
                     if k != 'fold'
                     and not isinstance(fold_results[0][k], (dict, list))]
@@ -603,8 +603,8 @@ def main():
     summary_path = os.path.join(OUTPUT_DIR, f'{VARIANT.lower()}_summary.json')
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2)
-    print(f'\n结果已保存至 {summary_path}')
-    print('训练完成。')
+    print(f'\nResults saved to {summary_path}')
+    print('Training complete.')
 
 if __name__ == '__main__':
     main()
