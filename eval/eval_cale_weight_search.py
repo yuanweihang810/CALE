@@ -1,8 +1,9 @@
 # eval_cale_weight_search.py
 """
-在现有 CALE V2 checkpoint 上，扫描推理聚合权重 lambda
-聚合公式: p_e = sigmoid(x_{e,c*}) + lambda * sum_{c != c*} sigmoid(x_{e,c})
-扫描 lambda in [0.0, 0.1, ..., 1.0]，在验证集上选最优，在测试集上报结果
+Scan the inference aggregation weight lambda on an existing CALE V2 checkpoint.
+Aggregation formula: p_e = sigmoid(x_{e,c*}) + lambda * sum_{c != c*} sigmoid(x_{e,c})
+Scan lambda in [0.0, 0.1, ..., 1.0], select the best on the validation set,
+and report results on the test set.
 """
 import os, json
 import numpy as np
@@ -165,7 +166,7 @@ class ResNet18CALE(nn.Module):
         return x
 
 def get_branch_probs(model, loader):
-    """返回 (probs, targets, conds)，probs 形状 (N, 7, 4)"""
+    """Return (probs, targets, conds), probs shape (N, 7, 4)"""
     model.eval()
     all_probs, all_targets, all_conds = [], [], []
     with torch.no_grad():
@@ -179,7 +180,7 @@ def get_branch_probs(model, loader):
     return np.concatenate(all_probs), np.concatenate(all_targets), np.array(all_conds)
 
 def aggregate(probs, conds, lam):
-    """p_e = prob[e, c*] + lam * sum_{c != c*} prob[e, c]，c* 由 conds 给出"""
+    """p_e = prob[e, c*] + lam * sum_{c != c*} prob[e, c], where c* is given by conds"""
     N = probs.shape[0]
     out = np.zeros((N, NUM_CLASSES), dtype=np.float32)
     for i in range(N):
@@ -211,7 +212,7 @@ def main():
     model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
     print(f'Loaded: {CKPT}\n')
 
-    # 重建验证集划分（与训练脚本一致）
+    # Reconstruct validation split (same as training script)
     full_train_root = Path(CUSTOM_DIR)
     all_paths = []
     for folder in sorted(full_train_root.iterdir()):
@@ -229,12 +230,12 @@ def main():
     val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
     test_set = EvalDataset(TEST_DIR, LABEL_FILE, transform_test)
     test_loader = DataLoader(test_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
-    print(f'验证集: {len(val_set)}  测试集: {len(test_set)}\n')
+    print(f'Validation set: {len(val_set)}  Test set: {len(test_set)}\n')
 
     val_probs, val_targets, val_conds = get_branch_probs(model, val_loader)
     test_probs, test_targets, test_conds = get_branch_probs(model, test_loader)
 
-    print('================= 验证集扫描 lambda（Top-1 口径）=================')
+    print('================= Validation set lambda scan (Top-1 protocol) =================')
     print(f'{"lambda":>8s} | {"Val Macro-F1":>14s} | {"Val UAR":>10s} | {"Val Hit":>10s}')
     best_lam, best_val_f1 = None, -1
     for lam in np.arange(0.0, 1.05, 0.1):
@@ -244,9 +245,9 @@ def main():
         if r['macro_f1'] > best_val_f1:
             best_val_f1 = r['macro_f1']; best_lam = lam; marker = ' *'
         print(f'{lam:8.1f} | {r["macro_f1"]:14.4f} | {r["uar"]:10.4f} | {r["hit_rate"]:10.4f}{marker}')
-    print(f'\n验证集最优 lambda = {best_lam:.1f}, Macro-F1 = {best_val_f1:.4f}\n')
+    print(f'\nBest lambda on validation = {best_lam:.1f}, Macro-F1 = {best_val_f1:.4f}\n')
 
-    print('================= 测试集 Top-1 口径 =================')
+    print('================= Test set Top-1 protocol =================')
     print(f'{"lambda":>8s} | {"Test Macro-F1":>14s} | {"Test UAR":>10s} | {"Test Hit":>10s}')
     for lam in np.arange(0.0, 1.05, 0.1):
         scores = aggregate(test_probs, test_conds, lam)
@@ -254,10 +255,10 @@ def main():
         marker = '  <-- val best' if abs(lam - best_lam) < 1e-6 else ''
         print(f'{lam:8.1f} | {r["macro_f1"]:14.4f} | {r["uar"]:10.4f} | {r["hit_rate"]:10.4f}{marker}')
 
-    print('\n================= 参考：Baseline 10% 1折 =================')
+    print('\n================= Reference: Baseline 10% 1-fold =================')
     print('  Top-1: Macro-F1=0.3030, UAR=0.2136, HitRate=0.5801\n')
 
-    # 保存
+    # Save
     out = {'best_lambda_val': float(best_lam), 'best_val_macro_f1': float(best_val_f1)}
     for lam in np.arange(0.0, 1.05, 0.1):
         key = f'lambda_{lam:.1f}'
@@ -266,7 +267,7 @@ def main():
         out[key] = {'val': val_r, 'test': test_r}
     with open('/root/autodl-tmp/IEEE/cale_v2_10pct_1fold/weight_search.json', 'w') as f:
         json.dump(out, f, indent=2)
-    print('结果已保存至 cale_v2_10pct_1fold/weight_search.json')
+    print('Results saved to cale_v2_10pct_1fold/weight_search.json')
 
 if __name__ == '__main__':
     main()
