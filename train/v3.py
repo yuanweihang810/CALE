@@ -1,17 +1,17 @@
 """
-Baseline 训练脚本 —— 统一 5 折划分，与 CALE 可比
-支持 V0 / V1 / V3 / V4
-- V0: ResNet-18 + 7 维 + CrossEntropy + 全层可训练 + 基础增强
-- V1: ResNet-18 + 7 维 + Sigmoid Focal + 浅层冻结 + Dropout + 强增强 + 加权采样
-- V3: ResNet-18 + SE + 7 维 + CrossEntropy + 全层可训练 + 基础增强
-- V4: ResNet-18 + SE + 7 维 + Sigmoid Focal + 浅层冻结 + Dropout + 强增强 + 加权采样
+Baseline training script - unified 5-fold split, comparable with CALE
+Supports V0 / V1 / V3 / V4
+- V0: ResNet-18 + 7-dim + CrossEntropy + fully trainable + basic augmentation
+- V1: ResNet-18 + 7-dim + Sigmoid Focal + shallow freeze + Dropout + strong augmentation + weighted sampling
+- V3: ResNet-18 + SE + 7-dim + CrossEntropy + fully trainable + basic augmentation
+- V4: ResNet-18 + SE + 7-dim + Sigmoid Focal + shallow freeze + Dropout + strong augmentation + weighted sampling
 
-与 CALE 脚本保持一致：
-- 同样的样本加载顺序（按路径排序）
-- 同样的 subject_id 提取（basename.split('_')[0]）
-- 同样的 GroupKFold(5)
-- 同样的 best_val_macro_f1 模型选择标准
-- 同样的验证集单标签 argmax 口径
+Consistent with the CALE scripts:
+- Same sample loading order (sorted by path)
+- Same subject_id extraction (basename.split('_')[0])
+- Same GroupKFold(5)
+- Same best_val_macro_f1 model selection criterion
+- Same single-label argmax validation protocol
 """
 
 import os
@@ -35,7 +35,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import GroupKFold
 
-# ==================== 配置 ====================
+# ==================== Configuration ====================
 CUSTOM_DIR = '/root/autodl-tmp/IEEE/data_aligned'
 TEST_DIR   = '/root/autodl-tmp/IEEE/test_aligned/test'
 LABEL_FILE = '/root/autodl-tmp/IEEE/label.txt'
@@ -57,7 +57,7 @@ FOCAL_GAMMA  = 2.0
 CLASS_ALPHAS = [0.9, 0.8, 1.0, 0.3, 0.5, 0.7, 0.2]
 DROPOUT      = 0.5
 
-# 变体配置
+# Variant configuration
 VARIANT_CONFIG = {
     'V0': {'use_ms': False, 'use_se': False},
     'V1': {'use_ms': True,  'use_se': False},
@@ -68,7 +68,7 @@ CFG     = VARIANT_CONFIG[VARIANT]
 USE_MS  = CFG['use_ms']
 USE_SE  = CFG['use_se']
 
-USE_WEIGHTED_SAMPLER = USE_MS   # 只有 MS 才启用
+USE_WEIGHTED_SAMPLER = USE_MS   # only enabled when MS is on
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -88,7 +88,7 @@ NUM_CLASSES    = len(EMOTIONS)
 NUM_CONDITIONS = 4
 CONDITION_NAMES = ['weak_light', 'strong_light', 'low_res', 'standard']
 
-# ==================== 数据增强 ====================
+# ==================== Data augmentation ====================
 if USE_MS:
     transform_train = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -114,7 +114,7 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 
-# ==================== 条件分辨器（仅用于分组分析） ====================
+# ==================== Condition classifier (only used for grouping analysis) ====================
 LOW_BRIGHTNESS_THRESH  = 80
 HIGH_BRIGHTNESS_THRESH = 120
 BLUR_VAR_THRESH        = 10
@@ -153,7 +153,7 @@ def folder_to_emotion(folder_name):
 def extract_subject_id(img_path):
     return os.path.basename(img_path).split('_')[0]
 
-# ==================== 数据集 ====================
+# ==================== Dataset ====================
 class EmotionDataset(torch.utils.data.Dataset):
     def __init__(self, transform=None,
                  precomputed_samples=None, subset_indices=None):
@@ -179,9 +179,9 @@ class EmotionDataset(torch.utils.data.Dataset):
                 if img_file.suffix.lower() in ('.jpg', '.jpeg', '.png'):
                     cond = classify_condition(str(img_file))
                     self.samples.append((str(img_file), emo_idx, cond))
-        # 与 CALE 脚本一致：按路径排序
+        # Consistent with the CALE script: sorted by path
         self.samples.sort(key=lambda x: x[0])
-        print(f'训练集加载完毕: {len(self.samples)} 张图片')
+        print(f'Training set loaded: {len(self.samples)} images')
 
     def __len__(self):
         return len(self.samples)
@@ -193,7 +193,7 @@ class EmotionDataset(torch.utils.data.Dataset):
             img = self.transform(img)
         return img, emo_idx, cond
 
-# ==================== 加权采样器 ====================
+# ==================== Weighted sampler ====================
 def build_weighted_sampler(dataset):
     if not USE_WEIGHTED_SAMPLER:
         return None
@@ -206,10 +206,10 @@ def build_weighted_sampler(dataset):
     sampler = WeightedRandomSampler(weights=weights,
                                     num_samples=len(weights),
                                     replacement=True)
-    print(f'加权采样器：各类别样本数 {class_counts}')
+    print(f'Weighted sampler: class counts {class_counts}')
     return sampler
 
-# ==================== SE 模块 ====================
+# ==================== SE module ====================
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=16):
         super().__init__()
@@ -226,14 +226,14 @@ class SELayer(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y
 
-# ==================== Baseline 模型（7 维） ====================
+# ==================== Baseline model (7-dim) ====================
 class ResNet18Baseline(nn.Module):
     """
-    ResNet-18 + 可选 SE + 7 维输出
-    V0：全层可训练、无 dropout、无 SE
-    V1：浅层冻结、dropout 0.5、无 SE
-    V3：全层可训练、无 dropout、有 SE
-    V4：浅层冻结、dropout 0.5、有 SE
+    ResNet-18 + optional SE + 7-dim output
+    V0: fully trainable, no dropout, no SE
+    V1: shallow freeze, dropout 0.5, no SE
+    V3: fully trainable, no dropout, with SE
+    V4: shallow freeze, dropout 0.5, with SE
     """
     def __init__(self, num_classes=7, reduction=16,
                  dropout=0.0, freeze_shallow=False, use_se=False):
@@ -287,7 +287,7 @@ def sigmoid_focal_loss(inputs, targets_1hot, alphas, gamma=2.0):
     """
     inputs:      (B, 7) logits
     targets_1hot:(B, 7) one-hot
-    alphas:      (7,) 每类正样本权重
+    alphas:      (7,) per-class positive sample weights
     """
     bce = F.binary_cross_entropy_with_logits(inputs, targets_1hot, reduction='none')
     p_t = torch.exp(-bce)
@@ -298,7 +298,7 @@ def sigmoid_focal_loss(inputs, targets_1hot, alphas, gamma=2.0):
     loss = focal_weight * weight * bce
     return loss.mean()
 
-# ==================== 训练 ====================
+# ==================== Training ====================
 def train_epoch(model, loader, optimizer, alphas, criterion_type='ce'):
     model.train()
     total_loss = 0.0
@@ -320,7 +320,7 @@ def train_epoch(model, loader, optimizer, alphas, criterion_type='ce'):
         total_loss += loss.item() * inputs.size(0)
     return total_loss / len(loader.dataset)
 
-# ==================== 评估（单标签 argmax） ====================
+# ==================== Evaluation (single-label argmax) ====================
 def evaluate_singlelabel(model, loader, criterion_type='ce'):
     model.eval()
     all_preds, all_targets, all_conds = [], [], []
@@ -364,25 +364,25 @@ def evaluate_singlelabel(model, loader, criterion_type='ce'):
         'per_f1': per_f1, 'cond_uar': cond_uar,
     }
 
-# ==================== 主程序 ====================
+# ==================== Main ====================
 def main():
     print(f'Device: {DEVICE}')
-    print(f'Baseline 变体: {VARIANT}')
+    print(f'Baseline variant: {VARIANT}')
     print(f'USE_MS={USE_MS} | USE_SE={USE_SE} | '
           f'DROPOUT={DROPOUT if USE_MS else 0.0} | '
           f'FREEZE={USE_MS} | WEIGHTED_SAMPLER={USE_WEIGHTED_SAMPLER}')
-    print(f'输出目录: {OUTPUT_DIR}')
+    print(f'Output dir: {OUTPUT_DIR}')
     print()
 
     criterion_type = 'ce' if not USE_MS else 'focal'
 
     alphas = torch.tensor(CLASS_ALPHAS, dtype=torch.float32).to(DEVICE)
 
-    # 加载完整训练集
+    # Load full training set
     full_train = EmotionDataset(transform=transform_train)
     all_samples = full_train.samples
     subject_ids = [extract_subject_id(s[0]) for s in all_samples]
-    print(f'共提取到 {len(set(subject_ids))} 个不同实例\n')
+    print(f'Extracted {len(set(subject_ids))} unique subjects\n')
 
     gkf = GroupKFold(n_splits=K_FOLDS)
     fold_results = []
@@ -458,21 +458,21 @@ def main():
             else:
                 patience_counter += 1
                 if patience_counter >= PATIENCE:
-                    print(f'[Fold {fold_id}] 早停 at epoch {epoch+1}')
+                    print(f'[Fold {fold_id}] Early stopping at epoch {epoch+1}')
                     break
             scheduler.step()
 
         elapsed = (time.time() - t_start) / 60
-        print(f'[Fold {fold_id}] 训练耗时: {elapsed:.1f} 分钟')
-        print(f'[Fold {fold_id}] 最佳 epoch: {best_val_epoch}, '
+        print(f'[Fold {fold_id}] Training time: {elapsed:.1f} min')
+        print(f'[Fold {fold_id}] Best epoch: {best_val_epoch}, '
               f'Val MacroF1={best_val_macro_f1:.4f}')
-        print(f'[Fold {fold_id}] 模型已保存: {ckpt_path}')
+        print(f'[Fold {fold_id}] Model saved: {ckpt_path}')
 
-        # 加载最佳模型做最终评估
+        # Load best model for final evaluation
         model.load_state_dict(best_state)
         val_best = evaluate_singlelabel(model, val_loader, criterion_type)
 
-        print(f'\n[Fold {fold_id}] 验证集最终结果:')
+        print(f'\n[Fold {fold_id}] Final validation results:')
         print(f'  Accuracy={val_best["accuracy"]:.4f} | '
               f'UAR={val_best["uar"]:.4f} | '
               f'Macro-F1={val_best["macro_f1"]:.4f}')
@@ -487,9 +487,9 @@ def main():
             'per_f1': val_best['per_f1'].tolist(),
         })
 
-    # ==================== 汇总 ====================
+    # ==================== Summary ====================
     print(f'\n{"="*80}')
-    print(f'{VARIANT} 5 折汇总')
+    print(f'{VARIANT} 5-fold summary')
     print(f'{"="*80}')
     for k, label in [('val_accuracy', 'Val Accuracy'),
                      ('val_uar', 'Val UAR'),
@@ -514,8 +514,8 @@ def main():
     summary_path = os.path.join(OUTPUT_DIR, f'{VARIANT.lower()}_summary.json')
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2)
-    print(f'\n结果已保存至 {summary_path}')
-    print('训练完成。')
+    print(f'\nResults saved to {summary_path}')
+    print('Training complete.')
 
 if __name__ == '__main__':
     main()
