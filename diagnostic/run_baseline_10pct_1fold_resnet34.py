@@ -1,7 +1,7 @@
 # run_baseline_10pct_1fold_resnet34.py
 """
-V0 Baseline —— 10% subject 抽样，1 折，30 epoch
-超参数已与 CALE V2 对齐：AdamW, lr=1e-5, wd=5e-3, 模型选择 Macro-F1
+V0 Baseline - 10% subject sampling, 1 fold, 30 epochs
+Hyperparameters aligned with CALE V2: AdamW, lr=1e-5, wd=5e-3, model selection by Macro-F1
 """
 
 import os
@@ -24,7 +24,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import GroupKFold
 
-# ==================== 配置 ====================
+# ==================== Configuration ====================
 CUSTOM_DIR = '/root/autodl-tmp/IEEE/data_aligned'
 TEST_DIR   = '/root/autodl-tmp/IEEE/test_aligned/test'
 LABEL_FILE = '/root/autodl-tmp/IEEE/label.txt'
@@ -61,7 +61,7 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
 ])
 
-# 条件分类器（仅用于分组分析，不影响训练）
+# Condition classifier (only used for grouping analysis, does not affect training)
 LOW_BRIGHTNESS_THRESH  = 80
 HIGH_BRIGHTNESS_THRESH = 120
 BLUR_VAR_THRESH        = 10
@@ -119,7 +119,7 @@ class EmotionDataset(torch.utils.data.Dataset):
     def _load_train(self, root_dir):
         root = Path(root_dir)
         if not root.exists():
-            raise FileNotFoundError(f'训练目录不存在: {root_dir}')
+            raise FileNotFoundError(f'Training directory does not exist: {root_dir}')
         for folder in root.iterdir():
             if not folder.is_dir():
                 continue
@@ -134,7 +134,7 @@ class EmotionDataset(torch.utils.data.Dataset):
                     cond = classify_condition(str(img_file))
                     self.samples.append((str(img_file), label, emo_idx, cond))
         self.samples.sort(key=lambda x: x[0])
-        print(f'训练集加载完毕: {len(self.samples)} 张图片')
+        print(f'Training set loaded: {len(self.samples)} images')
 
     def _load_test(self, img_dir, label_path):
         with open(label_path, 'r') as f:
@@ -152,7 +152,7 @@ class EmotionDataset(torch.utils.data.Dataset):
                     self.samples.append((p, labels, -1, cond))
                     break
         self.samples.sort(key=lambda x: x[0])
-        print(f'测试集加载完毕: {len(self.samples)} 张图片')
+        print(f'Test set loaded: {len(self.samples)} images')
 
     def __len__(self):
         return len(self.samples)
@@ -166,7 +166,7 @@ class EmotionDataset(torch.utils.data.Dataset):
 
 
 class ResNet18V0(nn.Module):
-    """标准 ResNet-18，全部可训练，7 维输出"""
+    """Standard ResNet-34, fully trainable, 7-dim output"""
     def __init__(self, num_classes=7):
         super().__init__()
         self.backbone = torchvision.models.resnet34(
@@ -194,7 +194,7 @@ def train_epoch(model, loader, optimizer, criterion):
 
 
 def evaluate(model, loader):
-    """softmax + argmax → multi-hot → 多标签指标"""
+    """softmax + argmax -> multi-hot -> multi-label metrics"""
     model.eval()
     all_probs, all_targets, all_conditions = [], [], []
     with torch.no_grad():
@@ -234,19 +234,19 @@ def evaluate(model, loader):
 
 def main():
     print(f'Device: {DEVICE}')
-    print('V0 Baseline: ResNet-18 + 7维 + CrossEntropy + 全部可训练')
-    print('超参对齐: AdamW lr=1e-5 wd=5e-3, 模型选择 Macro-F1')
-    print('训练数据比例: 10% subjects | 只跑第 1 折')
+    print('V0 Baseline: ResNet-34 + 7-dim + CrossEntropy + fully trainable')
+    print('Hyperparameters aligned: AdamW lr=1e-5 wd=5e-3, model selection by Macro-F1')
+    print('Training data ratio: 10% subjects | only fold 1')
 
     full_train = EmotionDataset('Training', transform_train)
     all_samples = full_train.samples
     subject_ids = [extract_subject_id(s[0]) for s in all_samples]
-    print(f'共提取到 {len(set(subject_ids))} 个不同实例')
+    print(f'Extracted {len(set(subject_ids))} unique subjects')
 
     test_set = EmotionDataset('Testing', transform_test)
     test_loader = DataLoader(test_set, batch_size=BATCH_SIZE,
                              shuffle=False, num_workers=8)
-    print(f'独立测试集样本数: {len(test_set)}')
+    print(f'Independent test set size: {len(test_set)}')
 
     gkf = GroupKFold(n_splits=K_FOLDS)
     fold_results = []
@@ -254,20 +254,20 @@ def main():
     for fold, (train_idx, val_idx) in enumerate(
             gkf.split(np.zeros(len(subject_ids)), groups=subject_ids)):
         if fold >= 1:
-            break  # 只跑第 1 折
+            break  # only run fold 1
 
-        print(f'\n==================== Fold {fold+1}/{K_FOLDS} (只跑此折) ====================')
+        print(f'\n==================== Fold {fold+1}/{K_FOLDS} (only this fold) ====================')
 
-        # ---- 10% subject 抽样 ----
+        # ---- 10% subject sampling ----
         train_subjects = list(set([subject_ids[i] for i in train_idx]))
         rng = np.random.RandomState(SEED + fold)
         rng.shuffle(train_subjects)
         num_keep = max(1, int(len(train_subjects) * 0.1))
         kept_subjects = set(train_subjects[:num_keep])
         train_idx_sub = [i for i in train_idx if subject_ids[i] in kept_subjects]
-        print(f'原始训练 subject 数: {len(train_subjects)}，'
-              f'抽样后: {len(kept_subjects)}，'
-              f'原始图像数: {len(train_idx)}，抽样后: {len(train_idx_sub)}')
+        print(f'Original training subjects: {len(train_subjects)}, '
+              f'after sampling: {len(kept_subjects)}, '
+              f'original images: {len(train_idx)}, after sampling: {len(train_idx_sub)}')
 
         train_set = EmotionDataset('Training', transform_train,
                                    precomputed_samples=all_samples,
@@ -310,14 +310,14 @@ def main():
             else:
                 patience_counter += 1
                 if patience_counter >= PATIENCE:
-                    print(f'早停 at epoch {epoch+1}')
+                    print(f'Early stopping at epoch {epoch+1}')
                     break
             scheduler.step()
 
         model.load_state_dict(best_state)
         test_metrics, _, _, _ = evaluate(model, test_loader)
 
-        print(f'\n--- Fold {fold+1} 测试集结果 ---')
+        print(f'\n--- Fold {fold+1} test set results ---')
         print(f'UAR: {test_metrics["uar"]:.4f} | '
               f'Macro-F1: {test_metrics["macro_f1"]:.4f} | '
               f'Micro-F1: {test_metrics["micro_f1"]:.4f}')
@@ -337,7 +337,7 @@ def main():
             'test_label_acc': test_metrics['label_acc'],
         })
 
-    print('\n==================== V0 Baseline 10% 数据 1 折结果 ====================')
+    print('\n==================== V0 Baseline 10% data 1-fold results ====================')
     for k in ['val_uar', 'val_macro_f1', 'test_uar', 'test_macro_f1',
               'test_micro_f1', 'test_hit_rate', 'test_hamming', 'test_label_acc']:
         vals = [r[k] for r in fold_results]
@@ -345,7 +345,7 @@ def main():
 
     with open(os.path.join(OUTPUT_DIR, 'v0_summary.json'), 'w') as f:
         json.dump({'fold_results': fold_results}, f, indent=2)
-    print(f'\n结果已保存至 {OUTPUT_DIR}/v0_summary.json')
+    print(f'\nResults saved to {OUTPUT_DIR}/v0_summary.json')
 
 
 if __name__ == '__main__':
