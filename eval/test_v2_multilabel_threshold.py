@@ -1,9 +1,9 @@
 """
-CALE V2 5 折模型阈值扫描
-- V2 配置：USE_MS=False, USE_SE=False
-- 模型结构：dropout=0.0, freeze_shallow=False, use_se=False
-- 扫描阈值 0.005~0.50（V2 输出偏低）
-- 与 V0/V7 结果可直接对比
+CALE V2 5-fold model threshold scan
+- V2 configuration: USE_MS=False, USE_SE=False
+- Model structure: dropout=0.0, freeze_shallow=False, use_se=False
+- Scan thresholds 0.005~0.50 (V2 outputs are low)
+- Directly comparable with V0/V7 results
 """
 
 import os
@@ -24,7 +24,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# ==================== 配置 ====================
+# ==================== Configuration ====================
 TEST_DIR   = '/root/autodl-tmp/IEEE/test_aligned/test'
 LABEL_FILE = '/root/autodl-tmp/IEEE/label.txt'
 
@@ -32,7 +32,7 @@ VARIANT = 'V2'
 INFERENCE_SCALE = 0.5
 TARGET_DENSITY = 2.5
 
-# 自动匹配模型结构
+# Automatic model structure matching
 VARIANT_CONFIG = {
     'V2': {'use_ms': False, 'use_se': False},
     'V5': {'use_ms': True,  'use_se': False},
@@ -56,7 +56,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 BATCH_SIZE  = 256
 NUM_WORKERS = 8
 
-# V2 输出偏低，阈值范围要低
+# V2 outputs are low, so the threshold range should be low
 if VARIANT == 'V2':
     THRESHOLDS_SOFT = np.arange(0.005, 0.51, 0.005).round(4).tolist()
 elif VARIANT in ('V5', 'V7'):
@@ -80,7 +80,7 @@ NUM_OUTPUTS    = NUM_CLASSES * NUM_CONDITIONS
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# ==================== 条件分辨器 ====================
+# ==================== Condition classifier ====================
 def classify_condition(image_path):
     try:
         with Image.open(image_path) as img:
@@ -100,7 +100,7 @@ def classify_condition(image_path):
     except Exception:
         return 3
 
-# ==================== 数据集 ====================
+# ==================== Dataset ====================
 class CALETestDataset(torch.utils.data.Dataset):
     def __init__(self, img_dir, label_path, transform, image_size=224):
         self.transform = transform
@@ -108,7 +108,7 @@ class CALETestDataset(torch.utils.data.Dataset):
         self.samples = []
         with open(label_path, 'r') as f:
             lines = f.readlines()
-        print('加载测试集...')
+        print('Loading test set...')
         for line in lines[1:]:
             parts = line.strip().split()
             if len(parts) < 8:
@@ -127,7 +127,7 @@ class CALETestDataset(torch.utils.data.Dataset):
             cond = classify_condition(img_path)
             self.samples.append((img_path, label_vec, cond))
         self.samples.sort(key=lambda x: x[0])
-        print(f'  测试集加载完毕: {len(self.samples)} 张图片')
+        print(f'  Test set loaded: {len(self.samples)} images')
 
     def __len__(self):
         return len(self.samples)
@@ -142,7 +142,7 @@ class CALETestDataset(torch.utils.data.Dataset):
                 torch.tensor(label_vec_7, dtype=torch.float32),
                 cond_idx)
 
-# ==================== 模型 ====================
+# ==================== Model ====================
 class SELayer(nn.Module):
     def __init__(self, channel, reduction=16):
         super().__init__()
@@ -205,7 +205,7 @@ class ResNet18CALE(nn.Module):
         x = self.fc(x)
         return x
 
-# ==================== 聚合 ====================
+# ==================== Aggregation ====================
 def aggregate_cale_soft(probs_28, conds, scale=0.5):
     B = probs_28.size(0)
     probs = probs_28.view(B, NUM_CLASSES, NUM_CONDITIONS)
@@ -219,7 +219,7 @@ def aggregate_sum(probs_28, conds=None):
     probs = probs_28.view(B, NUM_CLASSES, NUM_CONDITIONS)
     return probs.sum(dim=2)
 
-# ==================== 指标 ====================
+# ==================== Metrics ====================
 def compute_metrics(preds, targets):
     return {
         'uar': float(recall_score(targets, preds, average='macro', zero_division=0)),
@@ -242,14 +242,14 @@ def scan_thresholds(probs, targets, thresholds, guarantee_one=True):
         results[th] = compute_metrics(preds, targets)
     return results
 
-# ==================== 主程序 ====================
+# ==================== Main ====================
 if __name__ == '__main__':
     print(f'Device: {DEVICE}')
     print(f'VARIANT: {VARIANT} | USE_MS={USE_MS} | USE_SE={USE_SE} | DROPOUT={DROPOUT} | FREEZE={FREEZE_SHALLOW}')
-    print(f'推理缩放: INFERENCE_SCALE={INFERENCE_SCALE}')
-    print(f'目标标签密度: {TARGET_DENSITY}')
-    print(f'阈值范围: [{THRESHOLDS_SOFT[0]}, {THRESHOLDS_SOFT[-1]}] 共 {len(THRESHOLDS_SOFT)} 个')
-    print(f'输出目录: {OUTPUT_DIR}\n')
+    print(f'Inference scale: INFERENCE_SCALE={INFERENCE_SCALE}')
+    print(f'Target label density: {TARGET_DENSITY}')
+    print(f'Threshold range: [{THRESHOLDS_SOFT[0]}, {THRESHOLDS_SOFT[-1]}] with {len(THRESHOLDS_SOFT)} values')
+    print(f'Output dir: {OUTPUT_DIR}\n')
 
     transform_test = transforms.Compose([
         transforms.Resize((224, 224)),
@@ -262,7 +262,7 @@ if __name__ == '__main__':
                              num_workers=NUM_WORKERS, pin_memory=True)
 
     avg_true_labels = np.mean([s[1].sum() for s in test_set.samples])
-    print(f'真实平均标签数: {avg_true_labels:.4f}\n')
+    print(f'True average number of labels: {avg_true_labels:.4f}\n')
 
     all_fold_results = []
     all_fold_best = []
@@ -273,7 +273,7 @@ if __name__ == '__main__':
         print(f'{"="*80}')
 
         if not os.path.exists(model_path):
-            print(f'  [跳过] 模型不存在')
+            print(f'  [Skipped] Model not found')
             continue
 
         model = ResNet18CALE(
@@ -286,7 +286,7 @@ if __name__ == '__main__':
             state = state['net']
         model.load_state_dict(state)
         model.eval()
-        print(f'  模型加载完成')
+        print(f'  Model loaded')
 
         all_probs_28, all_targets, all_conditions = [], [], []
         with torch.no_grad():
@@ -335,22 +335,22 @@ if __name__ == '__main__':
         )
         best_density_m_sum = fold_results_sum[best_density_th_sum]
 
-        print(f'  [cale_soft] 密度最接近 {TARGET_DENSITY}:')
+        print(f'  [cale_soft] Density closest to {TARGET_DENSITY}:')
         print(f'    th={best_density_th:.4f} | AvgLabels={best_density_m["avg_pred_labels"]:.4f} | '
               f'UAR={best_density_m["uar"]:.4f} | MacroF1={best_density_m["macro_f1"]:.4f} | '
               f'MicroF1={best_density_m["micro_f1"]:.4f} | HitRate={best_density_m["hit_rate"]:.4f}')
-        print(f'  [cale_soft] Macro-F1 最优:')
+        print(f'  [cale_soft] Best Macro-F1:')
         print(f'    th={best_f1_th:.4f} | AvgLabels={best_f1_m["avg_pred_labels"]:.4f} | '
               f'UAR={best_f1_m["uar"]:.4f} | MacroF1={best_f1_m["macro_f1"]:.4f}')
-        print(f'  [cale_soft] UAR 最优:')
+        print(f'  [cale_soft] Best UAR:')
         print(f'    th={best_uar_th:.4f} | AvgLabels={best_uar_m["avg_pred_labels"]:.4f} | '
               f'UAR={best_uar_m["uar"]:.4f} | MacroF1={best_uar_m["macro_f1"]:.4f}')
-        print(f'  [sum] 密度最接近 {TARGET_DENSITY}:')
+        print(f'  [sum] Density closest to {TARGET_DENSITY}:')
         print(f'    th={best_density_th_sum:.4f} | AvgLabels={best_density_m_sum["avg_pred_labels"]:.4f} | '
               f'UAR={best_density_m_sum["uar"]:.4f} | MacroF1={best_density_m_sum["macro_f1"]:.4f}')
 
-        # 采样打印
-        print(f'  [cale_soft] 阈值采样:')
+        # Sampled threshold printing
+        print(f'  [cale_soft] Threshold sampling:')
         print(f'    {"th":>8} {"AvgLabels":>10} {"UAR":>8} {"MacroF1":>9} {"MicroF1":>9} {"HitRate":>9}')
         sample_ths = [0.005, 0.01, 0.02, 0.03, 0.05, 0.08, 0.10, 0.15, 0.20, 0.30, 0.50]
         for th in sample_ths:
@@ -388,16 +388,16 @@ if __name__ == '__main__':
         del model
         torch.cuda.empty_cache()
 
-    # ==================== 5 折汇总 ====================
+    # ==================== 5-fold summary ====================
     print(f'\n{"="*80}')
-    print(f'{VARIANT} 5 折阈值扫描汇总')
+    print(f'{VARIANT} 5-fold threshold scan summary')
     print(f'{"="*80}')
 
     if len(all_fold_best) == 0:
-        print('无有效结果')
+        print('No valid results')
         raise SystemExit
 
-    print('\n[cale_soft] 密度最接近 2.5:')
+    print('\n[cale_soft] Density closest to 2.5:')
     for key, label in [('avg_pred_labels', 'AvgLabels'),
                        ('uar', 'UAR'),
                        ('macro_f1', 'MacroF1'),
@@ -408,7 +408,7 @@ if __name__ == '__main__':
     ths = [r['soft_density_th'] for r in all_fold_best]
     print(f'  {"Threshold":12s}: {np.mean(ths):.4f} ± {np.std(ths):.4f}')
 
-    print('\n[cale_soft] Macro-F1 最优:')
+    print('\n[cale_soft] Best Macro-F1:')
     for key, label in [('avg_pred_labels', 'AvgLabels'),
                        ('uar', 'UAR'),
                        ('macro_f1', 'MacroF1'),
@@ -419,25 +419,25 @@ if __name__ == '__main__':
     ths = [r['soft_f1_th'] for r in all_fold_best]
     print(f'  {"Threshold":12s}: {np.mean(ths):.4f} ± {np.std(ths):.4f}')
 
-    print('\n[cale_soft] UAR 最优:')
+    print('\n[cale_soft] Best UAR:')
     for key, label in [('avg_pred_labels', 'AvgLabels'),
                        ('uar', 'UAR'),
                        ('macro_f1', 'MacroF1')]:
         vals = [r['soft_uar'][key] for r in all_fold_best]
         print(f'  {label:12s}: {np.mean(vals):.4f} ± {np.std(vals):.4f}')
 
-    print('\n[sum] 密度最接近 2.5:')
+    print('\n[sum] Density closest to 2.5:')
     for key, label in [('avg_pred_labels', 'AvgLabels'),
                        ('uar', 'UAR'),
                        ('macro_f1', 'MacroF1')]:
         vals = [r['sum_density'][key] for r in all_fold_best]
         print(f'  {label:12s}: {np.mean(vals):.4f} ± {np.std(vals):.4f}')
 
-    # ==================== 汇总对比表 ====================
+    # ==================== Summary comparison table ====================
     print(f'\n{"="*80}')
     print(f'{VARIANT} vs V0 (AvgLabels ≈ 2.5)')
     print(f'{"="*80}')
-    print(f'{"方法":<24} {"AvgLabels":>10} {"UAR":>8} {"MacroF1":>9} {"MicroF1":>9} {"HitRate":>9}')
+    print(f'{"Method":<24} {"AvgLabels":>10} {"UAR":>8} {"MacroF1":>9} {"MicroF1":>9} {"HitRate":>9}')
     print(f'{"V0 (threshold)":<24} {"2.5029":>10} {"0.5716":>8} {"0.5607":>9} {"0.5814":>9} {"0.9380":>9}')
     v_uar = np.mean([r['soft_density']['uar'] for r in all_fold_best])
     v_f1 = np.mean([r['soft_density']['macro_f1'] for r in all_fold_best])
@@ -446,10 +446,10 @@ if __name__ == '__main__':
     v_al = np.mean([r['soft_density']['avg_pred_labels'] for r in all_fold_best])
     print(f'{VARIANT+" cale_soft":<24} {v_al:>10.4f} {v_uar:>8.4f} {v_f1:>9.4f} '
           f'{v_mf1:>9.4f} {v_hr:>9.4f}')
-    print(f'  UAR 提升:     {v_uar - 0.5716:+.4f}')
-    print(f'  Macro-F1 提升: {v_f1 - 0.5607:+.4f}')
+    print(f'  UAR improvement:     {v_uar - 0.5716:+.4f}')
+    print(f'  Macro-F1 improvement: {v_f1 - 0.5607:+.4f}')
 
-    # 保存
+    # Save
     summary = {
         'variant': VARIANT,
         'use_ms': USE_MS, 'use_se': USE_SE,
@@ -465,9 +465,9 @@ if __name__ == '__main__':
     }
     with open(os.path.join(OUTPUT_DIR, f'{VARIANT.lower()}_multilabel_threshold_scan.json'), 'w') as f:
         json.dump(summary, f, indent=2)
-    print(f'\n结果已保存至 {OUTPUT_DIR}')
+    print(f'\nResults saved to {OUTPUT_DIR}')
 
-    # ==================== 画图 ====================
+    # ==================== Plot ====================
     common_ths = sorted(set(THRESHOLDS_SOFT))
     metrics_keys = ['avg_pred_labels', 'uar', 'macro_f1', 'micro_f1', 'hit_rate']
 
@@ -514,5 +514,5 @@ if __name__ == '__main__':
     plt.tight_layout()
     plt.savefig(os.path.join(OUTPUT_DIR, f'{VARIANT.lower()}_threshold_scan.png'), dpi=200)
     plt.close()
-    print(f'曲线图已保存至 {OUTPUT_DIR}')
-    print('\n扫描完成。')
+    print(f'Curve plot saved to {OUTPUT_DIR}')
+    print('\nScan complete.')
