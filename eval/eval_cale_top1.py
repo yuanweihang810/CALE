@@ -1,6 +1,7 @@
 # eval_cale_top1.py
 """
-加载已训练的 CALE V2 模型，用 top-1 口径重新评估测试集，与 Baseline argmax 对齐
+Load a trained CALE V2 model and re-evaluate the test set with the top-1 protocol,
+aligned with the Baseline argmax protocol.
 """
 import os
 import json
@@ -157,7 +158,7 @@ def main():
     test_set = TestDataset(TEST_DIR, LABEL_FILE, transform_test)
     test_loader = DataLoader(test_set, batch_size=BATCH_SIZE,
                              shuffle=False, num_workers=NUM_WORKERS)
-    print(f'测试集样本数: {len(test_set)}')
+    print(f'Test set size: {len(test_set)}')
 
     model = ResNet18CALE(num_outputs=NUM_OUTPUTS, dropout=0.0,
                          freeze_shallow=False, use_se=False).to(DEVICE)
@@ -179,7 +180,7 @@ def main():
     probs   = np.concatenate(all_probs, axis=0)
     targets = np.concatenate(all_targets, axis=0)
 
-    # ---------- 口径 1: top-1（与 Baseline argmax 完全对齐） ----------
+    # ---------- Protocol 1: top-1 (fully aligned with Baseline argmax) ----------
     preds_idx = np.argmax(probs, axis=1)
     preds_top1 = np.zeros_like(targets)
     preds_top1[np.arange(len(preds_idx)), preds_idx] = 1
@@ -191,7 +192,7 @@ def main():
     hit_top1  = (preds_top1 * targets).any(axis=1).mean()
     avg_top1  = preds_top1.sum(axis=1).mean()
 
-    # ---------- 口径 2: 固定阈值 0.5（原训练脚本的原始口径） ----------
+    # ---------- Protocol 2: fixed threshold 0.5 (original training script protocol) ----------
     preds_th = (probs > 0.5).astype(np.float32)
     uar_th  = recall_score(targets, preds_th, average='macro', zero_division=0)
     mf1_th  = f1_score(targets, preds_th, average='macro', zero_division=0)
@@ -200,8 +201,8 @@ def main():
     hit_th  = (preds_th * targets).any(axis=1).mean()
     avg_th  = preds_th.sum(axis=1).mean()
 
-    print('\n================= CALE V2 测试集评估 =================')
-    print('【Top-1 口径，与 Baseline argmax 对齐】')
+    print('\n================= CALE V2 Test Set Evaluation =================')
+    print('[Top-1 protocol, aligned with Baseline argmax]')
     print(f'  UAR       = {uar_top1:.4f}')
     print(f'  Macro-F1  = {mf1_top1:.4f}')
     print(f'  Micro-F1  = {mic_top1:.4f}')
@@ -209,7 +210,7 @@ def main():
     print(f'  Hamming   = {ham_top1:.4f}')
     print(f'  AvgLabels = {avg_top1:.4f}')
     print()
-    print('【阈值 0.5 口径，原脚本口径】')
+    print('[Threshold 0.5 protocol, original script protocol]')
     print(f'  UAR       = {uar_th:.4f}')
     print(f'  Macro-F1  = {mf1_th:.4f}')
     print(f'  Micro-F1  = {mic_th:.4f}')
@@ -217,9 +218,9 @@ def main():
     print(f'  Hamming   = {ham_th:.4f}')
     print(f'  AvgLabels = {avg_th:.4f}')
 
-    print('\n================= 与 Baseline 对比（Top-1 口径）=================')
-    print('  Baseline (10% 1折): Macro-F1=0.3030, UAR=0.2136, HitRate=0.5801')
-    print(f'  CALE V2  (10% 1折): Macro-F1={mf1_top1:.4f}, UAR={uar_top1:.4f}, HitRate={hit_top1:.4f}')
+    print('\n================= Comparison with Baseline (Top-1 protocol) =================')
+    print('  Baseline (10% 1-fold): Macro-F1=0.3030, UAR=0.2136, HitRate=0.5801')
+    print(f'  CALE V2  (10% 1-fold): Macro-F1={mf1_top1:.4f}, UAR={uar_top1:.4f}, HitRate={hit_top1:.4f}')
     print(f'  Delta: Macro-F1 = {mf1_top1 - 0.3030:+.4f}, UAR = {uar_top1 - 0.2136:+.4f}')
 
     out = {
@@ -232,7 +233,7 @@ def main():
     }
     with open('/root/autodl-tmp/IEEE/cale_v2_10pct_1fold/eval_top1.json', 'w') as f:
         json.dump(out, f, indent=2)
-    print('\n结果已保存至 cale_v2_10pct_1fold/eval_top1.json')
+    print('\nResults saved to cale_v2_10pct_1fold/eval_top1.json')
 
 if __name__ == '__main__':
     main()
